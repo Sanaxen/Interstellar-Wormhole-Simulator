@@ -1,0 +1,2 @@
+"""Interstellar-inspired wormhole renderer."""
+
