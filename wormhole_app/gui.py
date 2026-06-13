@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import queue
 import threading
 import tkinter as tk
@@ -10,6 +11,9 @@ from PIL import Image, ImageTk
 
 from .config import RenderConfig
 from .renderer import RenderCancelled, render_sequence
+
+
+SETTINGS_PATH = Path("wormhole_settings.json")
 
 
 class App(tk.Tk):
@@ -25,6 +29,7 @@ class App(tk.Tk):
         self.current_preview_path: Path | None = None
         self.preview_photo: ImageTk.PhotoImage | None = None
         self.vars = self._make_vars()
+        self._load_settings()
         self._build_ui()
         self.after(100, self._poll_queue)
 
@@ -48,6 +53,7 @@ class App(tk.Tk):
             "geodesic_steps": tk.IntVar(value=900),
             "antialias_samples": tk.IntVar(value=4),
             "high_order_filter": tk.BooleanVar(value=False),
+            "cinematic_tunnel": tk.BooleanVar(value=False),
             "ring_sharpness": tk.DoubleVar(value=0.18),
             "fov": tk.DoubleVar(value=78.0),
             "frame_slider": tk.DoubleVar(value=1.0),
@@ -115,16 +121,23 @@ class App(tk.Tk):
             text="High-order filter",
             variable=self.vars["high_order_filter"],
         ).grid(row=7, column=2, columnspan=2, sticky="w", pady=5)
+        ttk.Checkbutton(
+            params,
+            text="Cinematic tunnel interior",
+            variable=self.vars["cinematic_tunnel"],
+        ).grid(row=8, column=0, columnspan=4, sticky="w", pady=5)
 
         controls = ttk.Frame(left)
         controls.grid(row=3, column=0, sticky="ew", pady=(12, 0))
-        controls.columnconfigure(2, weight=1)
+        controls.columnconfigure(3, weight=1)
         self.render_button = ttk.Button(controls, text="Render Sequence", command=self._start_render)
         self.render_button.grid(row=0, column=0, sticky="w")
         self.cancel_button = ttk.Button(controls, text="Cancel", command=self._cancel_render, state=tk.DISABLED)
         self.cancel_button.grid(row=0, column=1, sticky="w", padx=(10, 0))
+        self.save_button = ttk.Button(controls, text="Save Settings", command=self._save_settings)
+        self.save_button.grid(row=0, column=2, sticky="w", padx=(10, 0))
         self.progress = ttk.Progressbar(controls, mode="determinate")
-        self.progress.grid(row=0, column=2, sticky="ew", padx=12)
+        self.progress.grid(row=0, column=3, sticky="ew", padx=12)
         ttk.Label(controls, textvariable=self.vars["status"]).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         preview = ttk.LabelFrame(root, text="Render Preview", padding=12)
@@ -189,9 +202,53 @@ class App(tk.Tk):
             geodesic_steps=max(20, int(self.vars["geodesic_steps"].get())),
             antialias_samples=1 if int(self.vars["antialias_samples"].get()) <= 1 else 4 if int(self.vars["antialias_samples"].get()) <= 4 else 9,
             high_order_filter=bool(self.vars["high_order_filter"].get()),
+            cinematic_tunnel=bool(self.vars["cinematic_tunnel"].get()),
             ring_sharpness=max(0.02, float(self.vars["ring_sharpness"].get())),
             fov_degrees=min(140.0, max(20.0, float(self.vars["fov"].get()))),
         )
+
+    def _settings_keys(self) -> list[str]:
+        return [
+            "entrance",
+            "exit",
+            "output",
+            "width",
+            "height",
+            "frames",
+            "fps",
+            "backend",
+            "rho",
+            "a",
+            "camera_distance",
+            "mass_parameter",
+            "lensing_width",
+            "celestial_distance",
+            "geodesic_steps",
+            "antialias_samples",
+            "high_order_filter",
+            "cinematic_tunnel",
+            "ring_sharpness",
+            "fov",
+        ]
+
+    def _load_settings(self) -> None:
+        if not SETTINGS_PATH.exists():
+            return
+        try:
+            data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+            for key in self._settings_keys():
+                if key in data and key in self.vars:
+                    self.vars[key].set(data[key])
+        except Exception as exc:
+            self.vars["status"].set(f"Settings load failed: {exc}")
+
+    def _save_settings(self) -> None:
+        try:
+            data = {key: self.vars[key].get() for key in self._settings_keys() if key in self.vars}
+            SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            self.vars["status"].set(f"Settings saved: {SETTINGS_PATH}")
+        except Exception as exc:
+            messagebox.showerror("Save settings failed", str(exc))
 
     def _start_render(self) -> None:
         if self.worker and self.worker.is_alive():

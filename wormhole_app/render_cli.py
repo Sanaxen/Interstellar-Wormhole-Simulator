@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--geodesic-steps", type=int, default=900, help="Numerical integration steps per frame")
     parser.add_argument("--antialias-samples", type=int, default=4, choices=[1, 4, 9], help="Subpixel geodesic samples per pixel")
     parser.add_argument("--high-order-filter", action=argparse.BooleanOptionalAction, default=False, help="Blur/dim high-order multiple images")
+    parser.add_argument("--cinematic-tunnel", action=argparse.BooleanOptionalAction, default=False, help="Use abstract cylindrical tunnel visuals inside the wormhole")
     parser.add_argument("--ring-sharpness", type=float, default=0.18, help=argparse.SUPPRESS)
     parser.add_argument("--fov", type=float, default=78.0)
     parser.add_argument("--video-name", default="wormhole_flythrough.mp4")
@@ -55,6 +56,7 @@ def main() -> None:
         geodesic_steps=args.geodesic_steps,
         antialias_samples=args.antialias_samples,
         high_order_filter=args.high_order_filter,
+        cinematic_tunnel=args.cinematic_tunnel,
         ring_sharpness=args.ring_sharpness,
         fov_degrees=args.fov,
         video_name=args.video_name,

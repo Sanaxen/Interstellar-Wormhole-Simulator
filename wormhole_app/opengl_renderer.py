@@ -30,6 +30,7 @@ uniform int frame_count;
 uniform int geodesic_steps;
 uniform int aa_samples;
 uniform int high_order_filter;
+uniform int cinematic_tunnel;
 uniform float rho;
 uniform float a_param;
 uniform float mass_param;
@@ -105,6 +106,44 @@ vec3 sample_pano_filtered(sampler2D tex, vec3 dir, float phi) {
     return mix(sharp, blurred, weight) * (1.0 - 0.28 * weight);
 }
 
+vec3 trace_tunnel_color(vec3 ray, float camera_l) {
+    float forward = max(ray.z, 0.05);
+    vec2 raw_plane = ray.xy / forward;
+    float depth_seed = 1.0 / max(length(raw_plane), 0.035);
+    vec2 bend = vec2(
+        0.16 * sin(depth_seed * 0.42 + camera_l * 0.32),
+        0.10 * cos(depth_seed * 0.36 + camera_l * 0.27)
+    );
+    vec2 plane = raw_plane - bend;
+    float radial = length(plane);
+    float theta = atan(plane.y, plane.x);
+    float depth = (1.0 / max(radial, 0.035)) + (camera_l + a_param) * 0.35;
+    float u = fract(theta / (2.0 * PI) + 0.5 + depth * 0.035);
+    float v = fract(depth * 0.18 + 0.10 * sin(theta * 4.0 + depth * 0.6));
+    vec3 wall = texture(exit_tex, vec2(u, 1.0 - v)).rgb;
+
+    vec3 forward_dir = normalize(vec3(ray.xy, max(ray.z, 0.08)));
+    vec3 exit_view = sample_pano(exit_tex, forward_dir);
+    vec3 entrance_echo = sample_pano(entrance_tex, -forward_dir);
+    float aperture = 1.0 - smoothstep01(0.12, 0.30, radial);
+    float wall_mix = smoothstep01(0.24, 0.42, radial);
+    float longitudinal_glow = 0.5 + 0.5 * cos(depth * PI * 1.4);
+    float rib_phase = abs(fract(depth * 0.62) - 0.5) * 2.0;
+    float ribs = 0.42 + 0.58 * smoothstep01(0.20, 0.55, rib_phase);
+    float side_shade = 0.72 + 0.28 * clamp(radial, 0.0, 1.0);
+    float wall_avg = dot(wall, vec3(0.333333));
+    wall = wall * 0.20 + vec3(wall_avg) * 0.50 + vec3(0.14, 0.18, 0.24) * 0.30;
+    wall *= (0.72 + 0.28 * ribs) * side_shade * 1.04;
+    vec3 core = exit_view;
+    float circular_core = 1.0 - smoothstep01(0.28, 0.38, radial);
+    vec3 color = wall * (1.0 - circular_core) + core * circular_core;
+    float rim = exp(-pow((radial - 0.34) / 0.055, 2.0));
+    vec3 rim_color = exit_view * 0.55 + vec3(0.72, 0.86, 1.0) * 0.45;
+    color = mix(color, rim_color, rim * 0.45);
+    color = mix(color, exit_view, aperture * 0.04);
+    return clamp(color * 1.08, 0.0, 1.0);
+}
+
 mat3 look_at(vec3 position, vec3 target) {
     vec3 forward = normalize(target - position);
     vec3 world_up = vec3(0.0, 1.0, 0.0);
@@ -149,18 +188,36 @@ vec3 slerp_forward(vec3 a, vec3 b, float t) {
 
 void camera_pose_continuous(out vec3 position, out mat3 rot) {
     float t = float(frame_index) / max(float(frame_count - 1), 1.0);
-    float turn_start = 1.0 - turn_fraction;
+    float approach_end = 0.24;
+    float tunnel_end = 0.72;
+    float exit_glide_end = 0.84;
     float exit_z = a_param + camera_distance * 0.42;
-    if (t < turn_start) {
-        float q = smoothstep01(0.0, turn_start, t);
-        float z = -camera_distance * (1.0 - q) + exit_z * q;
+    if (t < approach_end) {
+        float q = smoothstep01(0.0, approach_end, t);
+        float z = -camera_distance * (1.0 - q) + (-a_param * 0.92) * q;
+        position = vec3(0.0, 0.0, z);
+        vec3 forward = vec3(0.0, 0.0, 1.0);
+        vec3 right = vec3(1.0, 0.0, 0.0);
+        vec3 up = vec3(0.0, 1.0, 0.0);
+        rot = mat3(right, up, forward);
+    } else if (t < tunnel_end) {
+        float q = smoothstep01(approach_end, tunnel_end, t);
+        float z = (-a_param * 0.92) * (1.0 - q) + (a_param * 0.92) * q;
+        position = vec3(0.0, 0.0, z);
+        vec3 forward = vec3(0.0, 0.0, 1.0);
+        vec3 right = vec3(1.0, 0.0, 0.0);
+        vec3 up = vec3(0.0, 1.0, 0.0);
+        rot = mat3(right, up, forward);
+    } else if (t < exit_glide_end) {
+        float q = smoothstep01(tunnel_end, exit_glide_end, t);
+        float z = (a_param * 0.92) * (1.0 - q) + exit_z * q;
         position = vec3(0.0, 0.0, z);
         vec3 forward = vec3(0.0, 0.0, 1.0);
         vec3 right = vec3(1.0, 0.0, 0.0);
         vec3 up = vec3(0.0, 1.0, 0.0);
         rot = mat3(right, up, forward);
     } else {
-        float q = smoothstep01(turn_start, 1.0, t);
+        float q = smoothstep01(exit_glide_end, 1.0, t);
         float orbit_radius = rho * 0.36;
         position = vec3(sin(q * PI) * orbit_radius, 0.0, exit_z);
         float angle = PI * q;
@@ -204,7 +261,18 @@ vec3 trace_color(vec3 ray, float camera_l) {
 
     bool exit_side = end_l >= 0.0;
     vec3 sample_dir = normalize(vec3(transverse_unit * sin(phi), (exit_side ? 1.0 : -1.0) * cos(phi)));
-    return exit_side ? sample_pano_filtered(exit_tex, sample_dir, phi) : sample_pano_filtered(entrance_tex, sample_dir, phi);
+    vec3 physical = exit_side ? sample_pano_filtered(exit_tex, sample_dir, phi) : sample_pano_filtered(entrance_tex, sample_dir, phi);
+    if (cinematic_tunnel != 0) {
+        float transition_width = max(a_param * 0.12, rho * 0.55);
+        float tunnel_weight = 1.0 - smoothstep01(a_param, a_param + transition_width, abs(camera_l));
+        if (abs(camera_l) < a_param) {
+            tunnel_weight = 1.0;
+        }
+        if (tunnel_weight > 0.0) {
+            physical = mix(physical, trace_tunnel_color(ray, camera_l), tunnel_weight);
+        }
+    }
+    return physical;
 }
 
 void main() {
@@ -297,6 +365,7 @@ class OpenGLFrameRenderer:
         self.program["geodesic_steps"].value = int(min(max(cfg.geodesic_steps, 8), 4096))
         self.program["aa_samples"].value = int(cfg.antialias_samples)
         self.program["high_order_filter"].value = 1 if cfg.high_order_filter else 0
+        self.program["cinematic_tunnel"].value = 1 if cfg.cinematic_tunnel else 0
         self.program["rho"].value = float(max(cfg.rho, 0.05))
         self.program["a_param"].value = float(max(cfg.a, 0.001))
         if "mass_param" in self.program:
@@ -305,7 +374,8 @@ class OpenGLFrameRenderer:
         self.program["camera_distance"].value = float(max(cfg.camera_distance, 0.1))
         self.program["celestial_distance"].value = float(max(cfg.celestial_distance, 5.0))
         self.program["fov_degrees"].value = float(cfg.fov_degrees)
-        self.program["turn_fraction"].value = float(cfg.turn_fraction)
+        if "turn_fraction" in self.program:
+            self.program["turn_fraction"].value = float(cfg.turn_fraction)
         self.vao.render(self.moderngl.TRIANGLE_STRIP)
         data = self.fbo.read(components=3, alignment=1)
         image = Image.frombytes("RGB", (cfg.width, cfg.height), data)

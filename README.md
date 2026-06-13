@@ -22,6 +22,11 @@ The renderer saves numbered frames, then combines them into an MP4 video.
 6. Watch generated frames in the preview panel. Use the frame slider to inspect
    any frame that has already been computed.
 
+Click `Save Settings` to write the current GUI values to the fixed settings
+file `wormhole_settings.json`. The GUI automatically loads this file on the
+next launch, so the same panorama paths, output folder, backend, and wormhole
+parameters are restored.
+
 For command-line rendering, edit `render_cli.bat` or pass options directly:
 
 ```powershell
@@ -72,10 +77,16 @@ The practical model includes:
 - numerical controls for celestial-sphere distance and integration steps
 - subpixel antialiasing to reduce ring and caustic sampling artifacts
 - optional high-order image filtering to blur and dim repeated multiple images
+- optional cinematic tunnel interior mode that maps the exit panorama onto an
+  abstract cylindrical passage while preserving geodesic rendering outside
 - independent entrance and exit panoramas
 - generated frame sequence and MP4 output
 - live GUI preview of rendered frames with a computed-frame timeline slider
 - optional OpenGL GPU backend for faster preview/rendering on non-NVIDIA GPUs
+
+The default camera timing spends roughly half of the frame sequence inside the
+wormhole throat, making cinematic tunnel passage frames slower and more
+numerous than the approach and turn-back sections.
 
 `W` controls the width of the transition from the cylindrical throat to the
 asymptotically flat exterior. The coefficient and denominator both use `W`, so

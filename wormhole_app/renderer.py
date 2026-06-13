@@ -104,47 +104,29 @@ def make_camera_rays(width: int, height: int, fov_degrees: float, offset_x: floa
     return normalize(np.stack([xx, yy, zz], axis=-1))
 
 
-def camera_pose(frame: int, total_frames: int, cfg: RenderConfig) -> tuple[np.ndarray, np.ndarray, float]:
-    t = frame / max(total_frames - 1, 1)
-    turn_start = 1.0 - cfg.turn_fraction
-
-    if t < turn_start:
-        q = smoothstep(0.0, turn_start, t)
-        start_z = -cfg.camera_distance
-        end_z = cfg.a + cfg.camera_distance * 0.42
-        z = start_z * (1.0 - q) + end_z * q
-        position = np.array([0.0, 0.0, z], dtype=np.float32)
-        target = np.array([0.0, 0.0, z + 5.0], dtype=np.float32)
-        side = q
-    else:
-        q = smoothstep(turn_start, 1.0, t)
-        z = cfg.a + cfg.camera_distance * 0.42
-        orbit_radius = cfg.rho * 0.36
-        position = np.array(
-            [
-                math.sin(q * math.pi) * orbit_radius,
-                math.sin(q * math.pi * 0.75) * orbit_radius * 0.35,
-                z,
-            ],
-            dtype=np.float32,
-        )
-        target_z = cfg.a - (1.5 + cfg.camera_distance * q)
-        target = np.array([0.0, 0.0, target_z], dtype=np.float32)
-        side = 1.0
-    return position, target, side
-
-
 def camera_rotation(frame: int, total_frames: int, cfg: RenderConfig) -> tuple[np.ndarray, np.ndarray]:
     t = frame / max(total_frames - 1, 1)
-    turn_start = 1.0 - cfg.turn_fraction
+    approach_end = 0.24
+    tunnel_end = 0.72
+    exit_glide_end = 0.84
     exit_z = cfg.a + cfg.camera_distance * 0.42
-    if t < turn_start:
-        q = smoothstep(0.0, turn_start, t)
-        z = -cfg.camera_distance * (1.0 - q) + exit_z * q
+    if t < approach_end:
+        q = smoothstep(0.0, approach_end, t)
+        z = -cfg.camera_distance * (1.0 - q) + (-cfg.a * 0.92) * q
+        position = np.array([0.0, 0.0, z], dtype=np.float32)
+        forward = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    elif t < tunnel_end:
+        q = smoothstep(approach_end, tunnel_end, t)
+        z = (-cfg.a * 0.92) * (1.0 - q) + (cfg.a * 0.92) * q
+        position = np.array([0.0, 0.0, z], dtype=np.float32)
+        forward = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    elif t < exit_glide_end:
+        q = smoothstep(tunnel_end, exit_glide_end, t)
+        z = (cfg.a * 0.92) * (1.0 - q) + exit_z * q
         position = np.array([0.0, 0.0, z], dtype=np.float32)
         forward = np.array([0.0, 0.0, 1.0], dtype=np.float32)
     else:
-        q = smoothstep(turn_start, 1.0, t)
+        q = smoothstep(exit_glide_end, 1.0, t)
         orbit_radius = cfg.rho * 0.36
         position = np.array(
             [
@@ -217,7 +199,75 @@ class WormholeRenderer:
         color = np.where(side[..., None], exit_color, entrance_color)
         if cfg.high_order_filter:
             color = self._filter_high_order(color, phi)
+        if cfg.cinematic_tunnel:
+            transition_width = max(a * 0.12, rho * 0.55)
+            tunnel_weight = 1.0 - smoothstep(a, a + transition_width, abs(camera_l))
+            if abs(camera_l) < a:
+                tunnel_weight = 1.0
+            if tunnel_weight > 0.0:
+                tunnel = self._render_cinematic_tunnel(rays, camera_l, rho, a)
+                color = color * (1.0 - tunnel_weight) + tunnel * tunnel_weight
         return color
+
+    def _render_cinematic_tunnel(self, rays: np.ndarray, camera_l: float, rho: float, a: float) -> np.ndarray:
+        forward = np.maximum(rays[..., 2], 0.05)
+        depth_seed = 1.0 / np.maximum(np.sqrt((rays[..., 0] / forward) ** 2 + (rays[..., 1] / forward) ** 2), 0.035)
+        bend_x = 0.16 * np.sin(depth_seed * 0.42 + camera_l * 0.32)
+        bend_y = 0.10 * np.cos(depth_seed * 0.36 + camera_l * 0.27)
+        x_over_z = rays[..., 0] / forward - bend_x
+        y_over_z = rays[..., 1] / forward - bend_y
+        radial = np.sqrt(x_over_z * x_over_z + y_over_z * y_over_z)
+        theta = np.arctan2(y_over_z, x_over_z)
+        depth = (1.0 / np.maximum(radial, 0.035)) + (camera_l + a) * 0.35
+
+        u = (theta / (2.0 * math.pi) + 0.5 + depth * 0.035) % 1.0
+        v = (depth * 0.18 + 0.10 * np.sin(theta * 4.0 + depth * 0.6)) % 1.0
+        wall = self._sample_pano_uv(self.exit, u, v)
+
+        forward_dirs = rays.copy()
+        forward_dirs[..., 2] = np.maximum(forward_dirs[..., 2], 0.08)
+        forward_dirs = normalize(forward_dirs)
+        exit_view = self.exit.sample(forward_dirs)
+        entrance_echo = self.entrance.sample(-forward_dirs)
+
+        aperture = 1.0 - smoothstep(0.12, 0.30, radial)
+        wall_mix = smoothstep(0.24, 0.42, radial)
+        longitudinal_glow = 0.5 + 0.5 * np.cos(depth * math.pi * 1.4)
+        rib_phase = np.abs((depth * 0.62) % 1.0 - 0.5) * 2.0
+        ribs = 0.42 + 0.58 * smoothstep(0.20, 0.55, rib_phase)
+        side_shade = 0.72 + 0.28 * np.clip(radial, 0.0, 1.0)
+        tunnel_tint = np.array([0.14, 0.18, 0.24], dtype=np.float32)
+        wall_avg = np.mean(wall, axis=-1, keepdims=True)
+        wall = wall * 0.20 + wall_avg * 0.50 + tunnel_tint * 0.30
+        wall = np.clip(wall * (0.72 + 0.28 * ribs[..., None]) * side_shade[..., None] * 1.04, 0.0, 1.0)
+        rim = np.exp(-np.square((radial - 0.34) / 0.055))[..., None]
+        rim_color = exit_view * 0.55 + np.array([0.72, 0.86, 1.0], dtype=np.float32) * 0.45
+        core = exit_view
+        circular_core = 1.0 - smoothstep(0.28, 0.38, radial)
+        color = wall * (1.0 - circular_core[..., None]) + core * circular_core[..., None]
+        color = color * (1.0 - rim * 0.45) + rim_color * rim * 0.45
+        color = color * (1.0 - aperture[..., None] * 0.04) + exit_view * aperture[..., None] * 0.04
+        return np.clip(color * 1.08, 0.0, 1.0)
+
+    @staticmethod
+    def _sample_pano_uv(panorama: Panorama, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        image = panorama.image
+        height, width = image.shape[:2]
+        uu = (u % 1.0) * width
+        vv = np.clip(v, 0.0, 1.0) * (height - 1)
+        x0 = np.floor(uu).astype(np.int32) % width
+        y0 = np.clip(np.floor(vv).astype(np.int32), 0, height - 1)
+        x1 = (x0 + 1) % width
+        y1 = np.clip(y0 + 1, 0, height - 1)
+        fu = (uu - np.floor(uu))[..., None]
+        fv = (vv - np.floor(vv))[..., None]
+        c00 = image[y0, x0]
+        c10 = image[y0, x1]
+        c01 = image[y1, x0]
+        c11 = image[y1, x1]
+        top = c00 * (1.0 - fu) + c10 * fu
+        bottom = c01 * (1.0 - fu) + c11 * fu
+        return top * (1.0 - fv) + bottom * fv
 
     @staticmethod
     def _filter_high_order(color: np.ndarray, phi: np.ndarray) -> np.ndarray:

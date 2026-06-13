@@ -24,6 +24,7 @@ class RenderConfig:
     geodesic_steps: int = 900
     antialias_samples: int = 4
     high_order_filter: bool = False
+    cinematic_tunnel: bool = False
     ring_sharpness: float = 0.18
     roll_degrees: float = 0.0
     fov_degrees: float = 78.0
