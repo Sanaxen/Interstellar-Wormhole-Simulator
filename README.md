@@ -6,7 +6,17 @@ Paul Franklin, and Kip S. Thorne, "Visualizing Interstellar's Wormhole"
 
 Even implementing the formulas in the paper "Visualizing Interstellar's Wormhole" does not reproduce the wormhole seen in the movie Interstellar.
 
-<img src="./images/wormhole_flythrough2.mp4">
+<img src="./images/wormhole_flythrough2.mp4.gif">  
+
+Even extending the throat of the wormhole results in multiple repetitions.
+
+This result is correct, as it is also mentioned in the paper.
+
+In the movie *Interstellar*, the footage during wormhole passage is composited using a separate VFX. However, the specifics of what was done are unknown.
+
+Therefore, we experimented with the wormhole passage process.  
+<img src="./images/wormhole_flythrough4.mp4.gif">  
+
 
 This project renders a configurable wormhole fly-through using two 360-degree
 equirectangular panorama images:
