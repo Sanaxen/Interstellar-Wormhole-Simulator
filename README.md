@@ -4,6 +4,10 @@ Windows-friendly Python app inspired by Oliver James, Eugenie von Tunzelmann,
 Paul Franklin, and Kip S. Thorne, "Visualizing Interstellar's Wormhole"
 (arXiv:1502.03809).
 
+Even implementing the formulas in the paper "Visualizing Interstellar's Wormhole" does not reproduce the wormhole seen in the movie Interstellar.
+
+<img src="./images/wormhole_flythrough2.mp4">
+
 This project renders a configurable wormhole fly-through using two 360-degree
 equirectangular panorama images:
 
