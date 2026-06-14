@@ -219,10 +219,23 @@ class WormholeRenderer:
         radial = np.sqrt(x_over_z * x_over_z + y_over_z * y_over_z)
         theta = np.arctan2(y_over_z, x_over_z)
         depth = (1.0 / np.maximum(radial, 0.035)) + (camera_l + a) * 0.35
+        tunnel_phase = np.clip((camera_l + a) / max(2.0 * a, 1e-6), 0.0, 1.0)
+        wall_depth = depth + tunnel_phase * 5.2
 
-        u = (theta / (2.0 * math.pi) + 0.5 + depth * 0.035) % 1.0
-        v = (depth * 0.18 + 0.10 * np.sin(theta * 4.0 + depth * 0.6)) % 1.0
+        u = (theta / (2.0 * math.pi) + 0.5 + wall_depth * 0.028 + 0.018 * np.sin(wall_depth * 0.55)) % 1.0
+        v = (wall_depth * 0.145 + 0.055 * np.sin(theta + wall_depth * 0.45)) % 1.0
+        u2 = (theta / (2.0 * math.pi) + 0.5 - wall_depth * 0.018 + 0.027 * np.cos(theta + wall_depth * 0.31)) % 1.0
+        v2 = (wall_depth * 0.105 + 0.045 * np.cos(theta - wall_depth * 0.37)) % 1.0
+        theta_a = theta + (2.0 * math.pi / 3.0)
+        theta_b = theta - (2.0 * math.pi / 3.0)
+        u3 = (theta_a / (2.0 * math.pi) + 0.5 + wall_depth * 0.020) % 1.0
+        v3 = (wall_depth * 0.130 + 0.040 * np.sin(theta_a + wall_depth * 0.41)) % 1.0
+        u4 = (theta_b / (2.0 * math.pi) + 0.5 - wall_depth * 0.014) % 1.0
+        v4 = (wall_depth * 0.118 + 0.036 * np.cos(theta_b - wall_depth * 0.33)) % 1.0
         wall = self._sample_pano_uv(self.exit, u, v)
+        wall_alt = self._sample_pano_uv(self.exit, u2, v2)
+        wall_ring = self._sample_pano_uv(self.exit, u3, v3) * 0.5 + self._sample_pano_uv(self.exit, u4, v4) * 0.5
+        wall = wall * 0.56 + wall_alt * 0.24 + wall_ring * 0.20
 
         forward_dirs = rays.copy()
         forward_dirs[..., 2] = np.maximum(forward_dirs[..., 2], 0.08)
@@ -230,20 +243,28 @@ class WormholeRenderer:
         exit_view = self.exit.sample(forward_dirs)
         entrance_echo = self.entrance.sample(-forward_dirs)
 
-        aperture = 1.0 - smoothstep(0.12, 0.30, radial)
+        early_shrink = smoothstep(0.01, 0.05, tunnel_phase)
+        exit_approach = smoothstep(0.25, 0.95, tunnel_phase)
+        far_core = 0.20 * (1.0 - exit_approach) + 0.36 * exit_approach
+        core_inner = 0.52 * (1.0 - early_shrink) + far_core * early_shrink
+        core_outer = core_inner + (0.12 * (1.0 - early_shrink) + (0.08 + 0.04 * exit_approach) * early_shrink)
+        rim_radius = core_outer - 0.04
+        rim_width = 0.075 * (1.0 - early_shrink) + (0.040 + 0.025 * exit_approach) * early_shrink
+
+        aperture = 1.0 - smoothstep(core_inner * 0.38, core_inner * 0.95, radial)
         wall_mix = smoothstep(0.24, 0.42, radial)
-        longitudinal_glow = 0.5 + 0.5 * np.cos(depth * math.pi * 1.4)
-        rib_phase = np.abs((depth * 0.62) % 1.0 - 0.5) * 2.0
+        longitudinal_glow = 0.5 + 0.5 * np.cos(wall_depth * math.pi * 1.4)
+        rib_phase = np.abs((wall_depth * 0.62) % 1.0 - 0.5) * 2.0
         ribs = 0.42 + 0.58 * smoothstep(0.20, 0.55, rib_phase)
         side_shade = 0.72 + 0.28 * np.clip(radial, 0.0, 1.0)
         tunnel_tint = np.array([0.14, 0.18, 0.24], dtype=np.float32)
         wall_avg = np.mean(wall, axis=-1, keepdims=True)
-        wall = wall * 0.20 + wall_avg * 0.50 + tunnel_tint * 0.30
+        wall = wall * 0.10 + wall_avg * 0.62 + tunnel_tint * 0.28
         wall = np.clip(wall * (0.72 + 0.28 * ribs[..., None]) * side_shade[..., None] * 1.04, 0.0, 1.0)
-        rim = np.exp(-np.square((radial - 0.34) / 0.055))[..., None]
+        rim = np.exp(-np.square((radial - rim_radius) / rim_width))[..., None]
         rim_color = exit_view * 0.55 + np.array([0.72, 0.86, 1.0], dtype=np.float32) * 0.45
         core = exit_view
-        circular_core = 1.0 - smoothstep(0.28, 0.38, radial)
+        circular_core = 1.0 - smoothstep(core_inner, core_outer, radial)
         color = wall * (1.0 - circular_core[..., None]) + core * circular_core[..., None]
         color = color * (1.0 - rim * 0.45) + rim_color * rim * 0.45
         color = color * (1.0 - aperture[..., None] * 0.04) + exit_view * aperture[..., None] * 0.04
